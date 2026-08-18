@@ -24,6 +24,8 @@
     --accent-soft:#F3E1DE;
     --success:#2E7D53;
     --success-soft:#E1F0E7;
+    --forwarded:#1D6F8C;
+    --forwarded-soft:#DCEEF3;
     --pending:#B8791E;
     --pending-soft:#FBEEDA;
     --muted:#6B7785;
@@ -49,15 +51,16 @@
     position:sticky; top:0; z-index:20;
     background:var(--navy);
     color:#fff;
-    padding:16px 18px 0 18px;
+    padding:calc(16px + env(safe-area-inset-top)) 18px 0 18px;
   }
-  .header-row{display:flex; align-items:flex-start; justify-content:space-between;}
+  .header-row{display:flex; align-items:flex-start; justify-content:space-between; gap:10px;}
   .brand-eyebrow{font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:#9FB3C8; font-weight:600; margin:0 0 2px 0;}
   .brand-name{font-size:19px; font-weight:700; margin:0; letter-spacing:-.01em;}
-  .brand-sub{font-size:12.5px; color:#B9C7D6; margin:2px 0 12px 0;}
+  .brand-sub{font-size:12.5px; color:#B9C7D6; margin:2px 0 12px 0; display:inline-block;}
+  .header-actions{display:flex; gap:8px; flex-shrink:0;}
   .icon-btn{
     background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.18);
-    color:#fff; width:38px; height:38px; border-radius:10px; font-size:17px;
+    color:#fff; width:44px; height:44px; border-radius:10px; font-size:17px;
     display:flex; align-items:center; justify-content:center; cursor:pointer;
   }
   .ecg-wrap{width:100%; height:26px; overflow:hidden;}
@@ -95,6 +98,14 @@
   }
   select{ appearance:none; -webkit-appearance:none; background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='9'><path d='M1 1l6 6 6-6' stroke='%236B7785' stroke-width='2' fill='none' fill-rule='evenodd'/></svg>"); background-repeat:no-repeat; background-position:right 14px center; padding-right:36px; }
   input::placeholder{color:#A9B3BC;}
+
+  .chip-label{font-size:12px; font-weight:600; color:var(--muted); margin-bottom:6px;}
+  .chip-row{display:flex; gap:8px; overflow-x:auto; padding-bottom:10px; margin-bottom:4px; -webkit-overflow-scrolling:touch;}
+  .patient-chip{
+    flex-shrink:0; width:52px; height:52px; border-radius:10px; overflow:hidden;
+    border:2px solid var(--border); background:#fff; padding:0; cursor:pointer;
+  }
+  .patient-chip img{width:100%; height:100%; object-fit:cover; display:block;}
 
   .photo-target{
     border:1.5px dashed #B9C4CD; border-radius:12px; background:#FAFBFC;
@@ -161,6 +172,7 @@
   .entry-meta{font-size:12.5px; color:var(--muted); margin-top:2px;}
   .badge{font-size:11px; font-weight:700; padding:3px 9px; border-radius:999px; flex-shrink:0;}
   .badge-pending{background:var(--pending-soft); color:var(--pending);}
+  .badge-forwarded{background:var(--forwarded-soft); color:var(--forwarded);}
   .badge-billed{background:var(--success-soft); color:var(--success);}
 
   .empty{text-align:center; color:var(--muted); font-size:13.5px; padding:26px 10px;}
@@ -201,9 +213,12 @@
     <div>
       <p class="brand-eyebrow">My Heart Cardiology</p>
       <p class="brand-name">Inpatient Billing</p>
-      <p class="brand-sub" id="clinicianLine">Set your name in settings →</p>
+      <p class="brand-sub" id="clinicianLine">Loading…</p>
     </div>
-    <button class="icon-btn" id="settingsBtn" aria-label="Settings">⚙</button>
+    <div class="header-actions">
+      <button class="icon-btn" id="reportsBtn" aria-label="Reports">📊</button>
+      <button class="icon-btn" id="settingsBtn" aria-label="Settings">⚙</button>
+    </div>
   </div>
   <div class="ecg-wrap">
     <svg viewBox="0 0 400 26" preserveAspectRatio="none">
@@ -254,10 +269,9 @@
     <button class="btn btn-ghost" id="cancelEditBtn" style="display:none;">Cancel edit</button>
   </div>
 
-  <div class="list-header">
-    <h2>Pending <span class="count-pill" id="pendingCount">0</span></h2>
+  <div class="list-header" style="margin-top:22px;">
     <label class="select-all-label" id="selectAllWrap">
-      <input type="checkbox" id="selectAllPending"> Select all
+      <input type="checkbox" id="selectAllPending"> Select all (pending + forwarded)
     </label>
   </div>
   <div class="bulk-bar" id="bulkBar" style="display:none;">
@@ -267,7 +281,16 @@
       <button class="btn btn-ghost btn-sm" id="bulkExportBtn">Export PDF</button>
     </div>
   </div>
+
+  <div class="list-header" style="margin-top:10px;">
+    <h2>Pending <span class="count-pill" id="pendingCount">0</span></h2>
+  </div>
   <div id="pendingList"></div>
+
+  <div class="list-header">
+    <h2>Forwarded to admin <span class="count-pill" id="forwardedCount">0</span></h2>
+  </div>
+  <div id="forwardedList"></div>
 
   <div class="list-header">
     <h2>Billed <span class="count-pill" id="billedCount">0</span></h2>
