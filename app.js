@@ -163,15 +163,29 @@ function renderPhotoZone(){
     .slice(0, 8);
 
   let chipsHtml = '';
-  if(recent.length && !selectedPatientId && !currentPhoto){
-    chipsHtml = `
-      <div class="chip-label">Same patient as a recent entry?</div>
-      <div class="chip-row" id="recentPatientChips">
-        ${recent.map((p)=>`
-          <button type="button" class="patient-chip" data-id="${p.id}">
-            <img src="${p.photoThumb}" alt="">
-          </button>`).join('')}
-      </div>`;
+  if(!selectedPatientId && !currentPhoto){
+    if(recent.length){
+      chipsHtml = `
+        <div class="chip-label-row">
+          <span class="chip-label">Same patient as a recent entry?</span>
+          <button type="button" class="browse-all-link" id="browseAllPatientsBtn">Browse all</button>
+        </div>
+        <div class="chip-row" id="recentPatientChips">
+          ${recent.map((p)=>`
+            <div class="patient-chip-wrap">
+              <button type="button" class="patient-chip" data-id="${p.id}">
+                <img src="${p.photoThumb}" alt="">
+              </button>
+              <div class="patient-chip-cap">${escapeHtml(patientDisplayName(p))}</div>
+            </div>`).join('')}
+        </div>`;
+    } else if(activePatients().length){
+      chipsHtml = `
+        <div class="chip-label-row">
+          <span class="chip-label">Seen this patient before?</span>
+          <button type="button" class="browse-all-link" id="browseAllPatientsBtn">Browse all patients</button>
+        </div>`;
+    }
   }
 
   if(selectedPatientId){
@@ -182,7 +196,7 @@ function renderPhotoZone(){
         <img src="${p ? p.photoThumb : ''}" alt="Selected patient label">
         <button class="retake-btn" id="retakeBtn">Use different patient</button>
       </div>
-      <div class="mbs-hint">Using an existing patient's photo — only date and item number(s) needed below.</div>`;
+      <div class="mbs-hint">Using ${p ? escapeHtml(patientDisplayName(p)) : 'an existing patient'}'s photo — only date and item number(s) needed below.</div>`;
     document.getElementById('retakeBtn').onclick = ()=>{ selectedPatientId = null; renderPhotoZone(); };
   } else if(currentPhoto){
     zone.innerHTML = `
@@ -222,8 +236,23 @@ function renderPhotoZone(){
       });
     });
   }
+  const browseBtn = document.getElementById('browseAllPatientsBtn');
+  if(browseBtn) browseBtn.onclick = openPatientPicker;
+
+  const labelField = document.getElementById('patientLabelField');
+  if(labelField) labelField.style.display = (!selectedPatientId) ? 'block' : 'none';
 }
 renderPhotoZone();
+
+function patientDisplayName(p){
+  if(!p) return 'Unknown patient';
+  return p.label ? p.label : `Patient #${shortId(p.id)}`;
+}
+function patientLastEntry(patientId){
+  const lines = billingEntries.filter((e)=>e.patientId === patientId);
+  if(!lines.length) return null;
+  return lines.reduce((a, b)=>(a.date > b.date ? a : b));
+}
 
 async function processPhotoDataUrl(dataUrl){
   const [full, thumb] = await Promise.all([
@@ -374,6 +403,7 @@ document.getElementById('saveBtn').addEventListener('click', async ()=>{
         const patient = {
           id: genId('pt'),
           photoThumb: currentPhoto.thumb, photoFull: currentPhoto.full,
+          label: document.getElementById('patientLabelInput').value.trim(),
           ocrText: '', createdAt: new Date()
         };
         patients.unshift(patient);
@@ -407,6 +437,7 @@ function resetForm(){
   selectedPatientId = null;
   renderPhotoZone();
   renderMbsRows(['']);
+  document.getElementById('patientLabelInput').value = '';
   document.getElementById('noteInput').value = '';
   document.getElementById('locationInput').value = '';
   dateInput.value = new Date().toISOString().slice(0, 10);
@@ -504,7 +535,7 @@ function buildEntryRow(e, selectable){
     ${checkboxHtml}
     <img src="${p ? p.photoThumb : ''}" alt="">
     <div class="entry-body">
-      <div class="entry-mbs">MBS ${escapeHtml((e.mbsList || []).join(', '))}</div>
+      <div class="entry-mbs">${p && p.label ? escapeHtml(p.label) + ' · ' : ''}MBS ${escapeHtml((e.mbsList || []).join(', '))}</div>
       <div class="entry-meta">${formatDate(e.date)} · ${escapeHtml(e.location || '—')}${e.note ? ' · ' + escapeHtml(e.note) : ''}</div>
     </div>
     <span class="badge badge-${e.status}">${statusLabel(e.status)}</span>
@@ -577,7 +608,7 @@ function renderEntrySheet(id){
     <div class="overlay" id="overlay">
       <div class="sheet">
         <button class="sheet-close" id="closeSheet">✕</button>
-        <h3>MBS ${escapeHtml((e.mbsList || []).join(', '))}</h3>
+        <h3>${p && p.label ? escapeHtml(p.label) + ' — ' : ''}MBS ${escapeHtml((e.mbsList || []).join(', '))}</h3>
         <img class="full" src="${p ? p.photoThumb : ''}" alt="Patient label">
         <div class="detail-row"><span class="k">Patient ref</span><span class="v">#${shortId(e.patientId)}</span></div>
         <div class="detail-row"><span class="k">Date</span><span class="v">${formatDate(e.date)}</span></div>
@@ -649,8 +680,12 @@ function renderPatientSheet(patientId){
     <div class="overlay" id="overlay">
       <div class="sheet">
         <button class="sheet-close" id="backBtn" aria-label="Back">←</button>
-        <h3>Patient #${shortId(p.id)}</h3>
+        <h3>${escapeHtml(patientDisplayName(p))}</h3>
+        <p class="mbs-hint" style="margin:-8px 0 12px 0;">Patient #${shortId(p.id)}</p>
         <img class="full" src="${p.photoFull}" alt="Patient label, full quality backup">
+        <label class="field-label first">Your own shorthand for this patient</label>
+        <input type="text" id="patientLabelEditInput" placeholder="e.g. Bed 4, or JB" maxlength="40" value="${p.label ? escapeHtml(p.label) : ''}">
+        <button class="btn btn-ghost btn-sm" id="saveLabelBtn" style="margin-top:8px;">Save shorthand</button>
         <div class="btn-row">
           <button class="btn btn-ghost btn-sm" id="ocrBtn">${p.ocrText ? 'Re-detect text' : 'Detect text (beta)'}</button>
           <button class="btn btn-primary btn-sm" id="addDayBtn2">Add another day</button>
@@ -664,6 +699,12 @@ function renderPatientSheet(patientId){
   document.getElementById('overlay').addEventListener('click', (ev)=>{ if(ev.target.id === 'overlay') closeModal(); });
   document.getElementById('addDayBtn2').onclick = ()=>addAnotherDayFor(p.id);
   document.getElementById('ocrBtn').onclick = ()=>runOcr(p.id);
+  document.getElementById('saveLabelBtn').onclick = async ()=>{
+    p.label = document.getElementById('patientLabelEditInput').value.trim();
+    await idbPut('patients', p);
+    showToast('Saved');
+    renderLists();
+  };
 
   const listEl = document.getElementById('patientLinesList');
   if(!lines.length){
@@ -683,6 +724,75 @@ function renderPatientSheet(patientId){
       listEl.appendChild(row);
     });
   }
+}
+
+// ---- Full searchable patient picker (for choosing an existing patient beyond the small chip strip) ----
+function openPatientPicker(){
+  navStack = [];
+  pushSheet(renderPatientPickerSheet);
+}
+function renderPatientPickerSheet(){
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `
+    <div class="overlay" id="overlay">
+      <div class="sheet">
+        <button class="sheet-close" id="closeSheet">✕</button>
+        <h3>Choose a patient</h3>
+        <input type="text" id="patientSearchInput" placeholder="Search by your shorthand, location, or date…">
+        <div id="patientPickerList" style="margin-top:12px;"></div>
+      </div>
+    </div>`;
+  document.getElementById('closeSheet').onclick = closeModal;
+  document.getElementById('overlay').addEventListener('click', (ev)=>{ if(ev.target.id === 'overlay') closeModal(); });
+  document.getElementById('patientSearchInput').addEventListener('input', (ev)=>renderPatientPickerList(ev.target.value));
+  renderPatientPickerList('');
+}
+function renderPatientPickerList(query){
+  const listEl = document.getElementById('patientPickerList');
+  if(!listEl) return;
+  const q = query.trim().toLowerCase();
+
+  const rows = activePatients().map((p)=>{
+    const last = patientLastEntry(p.id);
+    return { p, last };
+  }).filter(({ p, last })=>{
+    if(!q) return true;
+    const haystack = [
+      p.label || '', p.ocrText || '',
+      last ? last.location || '' : '', last ? last.date : ''
+    ].join(' ').toLowerCase();
+    return haystack.includes(q);
+  }).sort((a, b)=>{
+    const aDate = a.last ? a.last.date : (a.p.createdAt || '');
+    const bDate = b.last ? b.last.date : (b.p.createdAt || '');
+    return bDate > aDate ? 1 : (bDate < aDate ? -1 : 0);
+  });
+
+  if(!rows.length){
+    listEl.innerHTML = `<div class="empty">${q ? 'No patients match that search.' : 'No patients yet — capture one from the form above.'}</div>`;
+    return;
+  }
+
+  listEl.innerHTML = '';
+  rows.forEach(({ p, last })=>{
+    const row = document.createElement('div');
+    row.className = 'picker-row';
+    row.innerHTML = `
+      <img src="${p.photoThumb}" alt="">
+      <div class="picker-row-body">
+        <div class="picker-row-label">${escapeHtml(patientDisplayName(p))}</div>
+        <div class="picker-row-meta">${last ? `Last seen ${formatDate(last.date)} · ${escapeHtml(last.location || '—')}` : 'No billing entries yet'}</div>
+      </div>
+    `;
+    row.addEventListener('click', ()=>{
+      selectedPatientId = p.id;
+      currentPhoto = null;
+      closeModal();
+      renderPhotoZone();
+      document.getElementById('entryFormCard').scrollIntoView({ behavior:'smooth', block:'start' });
+    });
+    listEl.appendChild(row);
+  });
 }
 
 async function runOcr(patientId){
@@ -785,7 +895,7 @@ async function generatePdf(list){
       y += 22 * wrapped.length;
     };
     line('Clinician:', clinicianName || 'Not set');
-    line('Patient ref:', `#${shortId(e.patientId)}`);
+    line('Patient ref:', p && p.label ? `#${shortId(e.patientId)} (${p.label})` : `#${shortId(e.patientId)}`);
     line('Date of service:', formatDate(e.date));
     line('Location:', e.location);
     line('MBS item number(s):', (e.mbsList || []).join(', '));
@@ -920,17 +1030,20 @@ function reportRows(){
   return activeEntries()
     .filter((e)=>(!from || e.date >= from) && (!to || e.date <= to) && (status === 'all' || e.status === status))
     .sort((a, b)=>a.date.localeCompare(b.date))
-    .map((e)=>({
-      date: e.date,
-      location: e.location || '',
-      patientId: e.patientId,
-      patientRef: `#${shortId(e.patientId)}`,
-      mbs: (e.mbsList || []).join(', '),
-      note: e.note || '',
-      status: statusLabel(e.status),
-      billedAt: e.billedAt ? new Date(e.billedAt).toLocaleString('en-AU') : '',
-      clinician: clinicianName || 'Not set'
-    }));
+    .map((e)=>{
+      const p = findPatient(e.patientId);
+      return {
+        date: e.date,
+        location: e.location || '',
+        patientId: e.patientId,
+        patientRef: p && p.label ? `#${shortId(e.patientId)} (${p.label})` : `#${shortId(e.patientId)}`,
+        mbs: (e.mbsList || []).join(', '),
+        note: e.note || '',
+        status: statusLabel(e.status),
+        billedAt: e.billedAt ? new Date(e.billedAt).toLocaleString('en-AU') : '',
+        clinician: clinicianName || 'Not set'
+      };
+    });
 }
 
 // Shared photo-embedding logic used by both the billing-slip PDF and the report appendix,
@@ -1019,7 +1132,7 @@ async function exportReport(kind){
       const p = findPatient(pid);
       doc.addPage('a4', 'portrait');
       doc.setFontSize(13); doc.setTextColor(18, 42, 69);
-      doc.text(`Appendix ${idx + 1} of ${uniquePatientIds.length} — Patient #${shortId(pid)}`, 40, 40);
+      doc.text(`Appendix ${idx + 1} of ${uniquePatientIds.length} — Patient #${shortId(pid)}${p && p.label ? ' (' + p.label + ')' : ''}`, 40, 40);
       doc.setFontSize(9); doc.setTextColor(107, 119, 133);
       const datesForPatient = rows.filter((r)=>r.patientId === pid).map((r)=>r.date).join(', ');
       doc.text(`Billing dates in this report: ${datesForPatient}`, 40, 58);

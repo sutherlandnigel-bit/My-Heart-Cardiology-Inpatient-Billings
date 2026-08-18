@@ -1,5 +1,5 @@
 // Bump this version string whenever app files change, to force clients to pick up the update.
-const CACHE_VERSION = 'mhc-billing-v5';
+const CACHE_VERSION = 'mhc-billing-v6';
 
 const APP_SHELL = [
   './',

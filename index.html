@@ -99,8 +99,21 @@
   select{ appearance:none; -webkit-appearance:none; background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='9'><path d='M1 1l6 6 6-6' stroke='%236B7785' stroke-width='2' fill='none' fill-rule='evenodd'/></svg>"); background-repeat:no-repeat; background-position:right 14px center; padding-right:36px; }
   input::placeholder{color:#A9B3BC;}
 
-  .chip-label{font-size:12px; font-weight:600; color:var(--muted); margin-bottom:6px;}
+  .chip-label-row{display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;}
+  .chip-label{font-size:12px; font-weight:600; color:var(--muted);}
+  .browse-all-link{background:none; border:none; color:var(--accent); font-size:12px; font-weight:700; cursor:pointer; padding:0;}
   .chip-row{display:flex; gap:8px; overflow-x:auto; padding-bottom:10px; margin-bottom:4px; -webkit-overflow-scrolling:touch;}
+  .patient-chip-cap{font-size:10px; color:var(--muted); text-align:center; margin-top:3px; max-width:52px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .patient-chip-wrap{flex-shrink:0; width:52px;}
+
+  .picker-row{
+    background:var(--card); border:1px solid var(--border); border-radius:12px;
+    padding:10px 12px; margin-bottom:8px; display:flex; gap:11px; align-items:center; cursor:pointer;
+  }
+  .picker-row img{width:48px; height:48px; border-radius:8px; object-fit:cover; flex-shrink:0; border:1px solid var(--border);}
+  .picker-row-body{flex:1; min-width:0;}
+  .picker-row-label{font-weight:700; font-size:14px;}
+  .picker-row-meta{font-size:12px; color:var(--muted); margin-top:2px;}
   .patient-chip{
     flex-shrink:0; width:52px; height:52px; border-radius:10px; overflow:hidden;
     border:2px solid var(--border); background:#fff; padding:0; cursor:pointer;
@@ -288,6 +301,12 @@
     <div id="photoZone"></div>
     <input type="file" accept="image/*" id="photoInput" style="display:none">
     <input type="file" accept="image/*" capture="environment" id="photoInputCamera" style="display:none">
+
+    <div id="patientLabelField" style="display:none;">
+      <label class="field-label">Your own shorthand for this patient (optional)</label>
+      <input type="text" id="patientLabelInput" placeholder="e.g. Bed 4, or JB" maxlength="40">
+      <div class="mbs-hint">Just for you to recognise them later across multiple days — not extracted from the photo.</div>
+    </div>
 
     <label class="field-label">Date</label>
     <input type="date" id="dateInput">
