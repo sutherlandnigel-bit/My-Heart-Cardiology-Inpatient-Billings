@@ -481,8 +481,8 @@ async function generatePdf(list){
     ? `MHC-billing-${list[0].date}-${slugify(list[0].location)}-${(list[0].mbsList || []).join('+')}.pdf`
     : `MHC-billing-batch-${new Date().toISOString().slice(0, 10)}.pdf`;
   const file = new File([blob], fileName, { type:'application/pdf' });
-  const dataUrl = await blobToDataUrl(blob);
-  showPdfReadySheet(file, dataUrl, fileName);
+const blobUrl = URL.createObjectURL(blob);
+  showPdfReadySheet(file, blobUrl, fileName);
 }
 
 function blobToDataUrl(blob){
@@ -494,7 +494,7 @@ function blobToDataUrl(blob){
   });
 }
 
-function showPdfReadySheet(file, dataUrl, fileName){
+function showPdfReadySheet(file, blobUrl, fileName){
   const root = document.getElementById('modalRoot');
   const canShareFile = !!(navigator.canShare && navigator.canShare({ files:[file] }));
 
@@ -505,8 +505,8 @@ function showPdfReadySheet(file, dataUrl, fileName){
         <h3>PDF ready</h3>
         <p style="font-size:13.5px;color:var(--muted);line-height:1.5;margin:0 0 14px 0;">${fileName}</p>
         <button class="btn btn-primary" id="shareBtn">${canShareFile ? 'Share to admin' : 'Try share (may not be supported here)'}</button>
-        <a href="${dataUrl}" download="${fileName}" class="btn btn-ghost" id="saveLink" style="display:block;text-align:center;text-decoration:none;">Open / save a copy</a>
-      </div>
+        <a href="${blobUrl}" target="_blank" rel="noopener" class="btn btn-ghost" id="saveLink" style="display:block;text-align:center;text-decoration:none;">Open a copy in Safari</a>
+        <p class="mbs-hint" style="margin-top:10px;">Opens the PDF in Safari, where you can use its own Share/Save icon.</p>      </div>
     </div>`;
 
   document.getElementById('shareBtn').onclick = async ()=>{
