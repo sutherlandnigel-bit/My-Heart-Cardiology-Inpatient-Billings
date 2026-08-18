@@ -195,12 +195,21 @@ function renderPhotoZone(){
   } else {
     zone.innerHTML = `
       ${chipsHtml}
-      <div class="photo-target" id="photoTarget">
-        <div class="glyph">📷</div>
-        <div class="hint">Tap to add a patient label photo</div>
-        <div class="sub">Take a new photo or choose from your library — stored on this device only</div>
+      <div class="photo-target">
+        <div class="sub-top">Stored on this device only</div>
+        <div class="photo-source-row">
+          <button type="button" class="photo-source-btn" id="takePhotoBtn">
+            <span class="glyph">📷</span>
+            <span class="hint">Take photo</span>
+          </button>
+          <button type="button" class="photo-source-btn" id="choosePhotoBtn">
+            <span class="glyph">🖼️</span>
+            <span class="hint">Choose from library</span>
+          </button>
+        </div>
       </div>`;
-    document.getElementById('photoTarget').onclick = ()=>document.getElementById('photoInput').click();
+    document.getElementById('takePhotoBtn').onclick = openCameraCapture;
+    document.getElementById('choosePhotoBtn').onclick = ()=>document.getElementById('photoInput').click();
   }
 
   const chipRow = document.getElementById('recentPatientChips');
@@ -216,21 +225,125 @@ function renderPhotoZone(){
 }
 renderPhotoZone();
 
-document.getElementById('photoInput').addEventListener('change', (e)=>{
-  const file = e.target.files[0];
+async function processPhotoDataUrl(dataUrl){
+  const [full, thumb] = await Promise.all([
+    downscaleImage(dataUrl, 1600, 0.88),
+    downscaleImage(dataUrl, 480, 0.75)
+  ]);
+  currentPhoto = { full, thumb };
+  selectedPatientId = null;
+  renderPhotoZone();
+}
+
+function handlePhotoFile(file){
   if(!file) return;
   const reader = new FileReader();
-  reader.onload = async ()=>{
-    const [full, thumb] = await Promise.all([
-      downscaleImage(reader.result, 1600, 0.88),
-      downscaleImage(reader.result, 480, 0.75)
-    ]);
-    currentPhoto = { full, thumb };
-    selectedPatientId = null;
-    renderPhotoZone();
-  };
+  reader.onload = ()=>processPhotoDataUrl(reader.result);
   reader.readAsDataURL(file);
-});
+}
+document.getElementById('photoInput').addEventListener('change', (e)=>handlePhotoFile(e.target.files[0]));
+document.getElementById('photoInputCamera').addEventListener('change', (e)=>handlePhotoFile(e.target.files[0]));
+
+// ==========================================================================
+// In-page camera capture — a live camera view rendered directly in the app
+// (getUserMedia), rather than handing off to the phone's separate camera app.
+// Falls back to the OS camera picker if getUserMedia isn't supported.
+// ==========================================================================
+let cameraStream = null;
+
+async function openCameraCapture(){
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    document.getElementById('photoInputCamera').click(); // fallback for unsupported browsers
+    return;
+  }
+  renderCameraLive();
+  try{
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' } }, audio: false
+    });
+    const video = document.getElementById('cameraVideo');
+    if(video){ video.srcObject = cameraStream; await video.play().catch(()=>{}); }
+  }catch(err){
+    renderCameraError();
+  }
+}
+
+function stopCameraStream(){
+  if(cameraStream){
+    cameraStream.getTracks().forEach((t)=>t.stop());
+    cameraStream = null;
+  }
+}
+
+function closeCameraCapture(){
+  stopCameraStream();
+  document.getElementById('cameraRoot').innerHTML = '';
+}
+
+function renderCameraLive(){
+  const root = document.getElementById('cameraRoot');
+  root.innerHTML = `
+    <div class="camera-overlay">
+      <video id="cameraVideo" class="camera-video" autoplay playsinline muted></video>
+      <div class="camera-top-bar">
+        <button class="camera-close-btn" id="cameraCloseBtn" aria-label="Cancel">✕</button>
+      </div>
+      <div class="camera-controls">
+        <button class="shutter-btn" id="shutterBtn" aria-label="Take photo"></button>
+      </div>
+    </div>`;
+  document.getElementById('cameraCloseBtn').onclick = closeCameraCapture;
+  document.getElementById('shutterBtn').onclick = captureFrame;
+}
+
+function renderCameraError(){
+  const root = document.getElementById('cameraRoot');
+  root.innerHTML = `
+    <div class="camera-overlay">
+      <div class="camera-top-bar">
+        <button class="camera-close-btn" id="cameraCloseBtn" aria-label="Close">✕</button>
+      </div>
+      <div class="camera-error">
+        <p>Couldn't access the camera — check camera permission for this app in your phone's settings, or use "Choose from library" instead.</p>
+        <button class="btn btn-ghost" id="cameraErrorCloseBtn">Close</button>
+      </div>
+    </div>`;
+  document.getElementById('cameraCloseBtn').onclick = closeCameraCapture;
+  document.getElementById('cameraErrorCloseBtn').onclick = closeCameraCapture;
+}
+
+function captureFrame(){
+  const video = document.getElementById('cameraVideo');
+  if(!video || !video.videoWidth) return;
+  const canvas = document.createElement('canvas');
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  canvas.getContext('2d').drawImage(video, 0, 0);
+  const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+  renderCameraReview(dataUrl);
+}
+
+function renderCameraReview(dataUrl){
+  const root = document.getElementById('cameraRoot');
+  root.innerHTML = `
+    <div class="camera-overlay">
+      <img class="camera-preview-img" src="${dataUrl}" alt="Captured photo preview">
+      <div class="camera-top-bar">
+        <button class="camera-close-btn" id="cameraCloseBtn" aria-label="Cancel">✕</button>
+      </div>
+      <div class="camera-review-controls">
+        <button class="btn btn-ghost" id="retakeFrameBtn">Retake</button>
+        <button class="btn btn-primary" id="usePhotoBtn">Use this photo</button>
+      </div>
+    </div>`;
+  document.getElementById('cameraCloseBtn').onclick = closeCameraCapture;
+  document.getElementById('retakeFrameBtn').onclick = renderCameraLive;
+  document.getElementById('usePhotoBtn').onclick = async ()=>{
+    await processPhotoDataUrl(dataUrl);
+    closeCameraCapture();
+  };
+}
+
 
 // ---- Save / update a billing entry ----
 document.getElementById('saveBtn').addEventListener('click', async ()=>{
