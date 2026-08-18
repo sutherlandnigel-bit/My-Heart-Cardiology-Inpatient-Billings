@@ -189,7 +189,7 @@ function renderPhotoZone(){
       ${chipsHtml}
       <div class="photo-preview">
         <img src="${currentPhoto.thumb}" alt="Captured patient label">
-        <button class="retake-btn" id="retakeBtn">Retake</button>
+        <button class="retake-btn" id="retakeBtn">Change photo</button>
       </div>`;
     document.getElementById('retakeBtn').onclick = ()=>{ currentPhoto = null; renderPhotoZone(); };
   } else {
@@ -197,8 +197,8 @@ function renderPhotoZone(){
       ${chipsHtml}
       <div class="photo-target" id="photoTarget">
         <div class="glyph">📷</div>
-        <div class="hint">Tap to photograph Bradma sticker</div>
-        <div class="sub">Stored on this device only</div>
+        <div class="hint">Tap to add a patient label photo</div>
+        <div class="sub">Take a new photo or choose from your library — stored on this device only</div>
       </div>`;
     document.getElementById('photoTarget').onclick = ()=>document.getElementById('photoInput').click();
   }
