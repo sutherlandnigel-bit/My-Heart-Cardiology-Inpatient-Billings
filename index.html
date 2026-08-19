@@ -359,10 +359,9 @@
 
     <label class="field-label">Encounter type</label>
     <select id="encounterTypeInput">
-      <option value="initial">Initial</option>
-      <option value="subsequent">Subsequent</option>
-      <option value="review">Review</option>
-      <option value="discharge">Discharge</option>
+      <option value="inpatient_new">Inpatient New</option>
+      <option value="inpatient_review">Inpatient Review</option>
+      <option value="procedure">Procedure</option>
     </select>
 
     <label class="field-label">MBS item number(s)</label>
@@ -375,6 +374,20 @@
 
     <label class="field-label">Note (optional)</label>
     <input type="text" id="noteInput" placeholder="Ward / procedure detail">
+
+    <label class="field-label">Patient status</label>
+    <select id="patientStatusInput">
+      <option value="current">Current (not discharged)</option>
+      <option value="discharged">Discharged</option>
+    </select>
+    <div id="dischargeDateField" style="display:none;">
+      <label class="field-label">Discharge date</label>
+      <input type="date" id="dischargeDateEntryInput">
+    </div>
+
+    <label class="field-label">Follow-up instructions (optional)</label>
+    <input type="text" id="followUpEntryInput" placeholder="e.g. GP review in 1 week, repeat echo in 3 months">
+    <div class="mbs-hint">Applies to this patient generally, not just this one billing date.</div>
 
     <div class="err" id="formErr"></div>
     <button class="btn btn-primary" id="saveBtn">Save entry</button>

@@ -96,6 +96,55 @@ function activePatients(){ return patients; }
 function activeEntries(){ return billingEntries; }
 function findPatient(id){ return patients.find((p)=>p.id === id); }
 
+// ---- Patient status (discharged/current) + follow-up instructions, right in the entry form ----
+on('patientStatusInput', 'change', (ev)=>{
+  const field = document.getElementById('dischargeDateField');
+  if(!field) return;
+  if(ev.target.value === 'discharged'){
+    field.style.display = 'block';
+    const dateEl = document.getElementById('dischargeDateEntryInput');
+    if(dateEl && !dateEl.value) dateEl.value = new Date().toISOString().slice(0, 10);
+  } else {
+    field.style.display = 'none';
+  }
+});
+
+// Fills the form's status/follow-up fields from a patient record (or clears them for a brand-new patient).
+function populatePatientStatusFields(p){
+  const statusEl = document.getElementById('patientStatusInput');
+  const dateField = document.getElementById('dischargeDateField');
+  const dateEl = document.getElementById('dischargeDateEntryInput');
+  const followUpEl = document.getElementById('followUpEntryInput');
+  if(!statusEl || !dateField || !dateEl || !followUpEl) return;
+
+  if(p && p.dischargedAt){
+    statusEl.value = 'discharged';
+    dateField.style.display = 'block';
+    dateEl.value = p.dischargedAt;
+  } else {
+    statusEl.value = 'current';
+    dateField.style.display = 'none';
+    dateEl.value = '';
+  }
+  followUpEl.value = (p && p.followUpInstructions) ? p.followUpInstructions : '';
+}
+
+// Applies whatever the form's status/follow-up fields currently say back onto a patient record.
+async function applyPatientStatusFields(p){
+  const statusEl = document.getElementById('patientStatusInput');
+  const dateEl = document.getElementById('dischargeDateEntryInput');
+  const followUpEl = document.getElementById('followUpEntryInput');
+  if(!statusEl || !dateEl || !followUpEl) return;
+
+  if(statusEl.value === 'discharged'){
+    p.dischargedAt = dateEl.value || new Date().toISOString().slice(0, 10);
+  } else {
+    p.dischargedAt = null;
+  }
+  p.followUpInstructions = followUpEl.value.trim();
+  await idbPut('patients', p);
+}
+
 // ---- MBS item rows ----
 function renderMbsRows(values){
   const container = document.getElementById('mbsRows');
@@ -291,7 +340,8 @@ function renderPhotoZone(){
       btn.addEventListener('click', ()=>{
         selectedPatientId = btn.getAttribute('data-id');
         currentPhoto = null;
-        setEncounterTypeField('subsequent');
+        setEncounterTypeField('inpatient_review');
+        populatePatientStatusFields(findPatient(selectedPatientId));
         renderPhotoZone();
       });
     });
@@ -442,7 +492,7 @@ on('saveBtn', 'click', async ()=>{
   const location = document.getElementById('locationInput').value;
   const note = document.getElementById('noteInput').value.trim();
   const encounterTypeEl = document.getElementById('encounterTypeInput');
-  const encounterType = encounterTypeEl ? encounterTypeEl.value : 'subsequent';
+  const encounterType = encounterTypeEl ? encounterTypeEl.value : 'inpatient_review';
 
   if(!selectedPatientId && !currentPhoto){ err.textContent = 'Add a photo, or pick an existing patient above.'; return; }
   if(!date){ err.textContent = 'Select a date.'; return; }
@@ -470,22 +520,27 @@ on('saveBtn', 'click', async ()=>{
       if(e){
         e.date = date; e.location = location; e.mbsList = mbsList; e.note = note; e.encounterType = encounterType;
         await idbPut('billingEntries', e);
+        const p = findPatient(e.patientId);
+        if(p) await applyPatientStatusFields(p);
       }
       showToast('Entry updated');
       editingId = null;
     } else {
       let patientId = selectedPatientId;
+      let patient;
       if(!patientId){
-        const patient = {
+        patient = {
           id: genId('pt'),
           photoThumb: currentPhoto.thumb, photoFull: currentPhoto.full,
           label: document.getElementById('patientLabelInput').value.trim(),
           ocrText: '', createdAt: new Date()
         };
         patients.unshift(patient);
-        await idbPut('patients', patient);
         patientId = patient.id;
+      } else {
+        patient = findPatient(patientId);
       }
+      if(patient) await applyPatientStatusFields(patient);
       const now = new Date();
       const entry = {
         id: genId('bl'), patientId,
@@ -524,7 +579,8 @@ function resetForm(){
   document.getElementById('patientLabelInput').value = '';
   document.getElementById('noteInput').value = '';
   document.getElementById('locationInput').value = '';
-  setEncounterTypeField('initial');
+  setEncounterTypeField('inpatient_new');
+  populatePatientStatusFields(null);
   dateInput.value = new Date().toISOString().slice(0, 10);
   document.getElementById('formErr').textContent = '';
   document.getElementById('entryFormTitle').textContent = 'New billing entry';
@@ -543,7 +599,8 @@ function startEdit(id){
   document.getElementById('locationInput').value = e.location || '';
   renderMbsRows(e.mbsList && e.mbsList.length ? e.mbsList : ['']);
   document.getElementById('noteInput').value = e.note || '';
-  setEncounterTypeField(e.encounterType || 'subsequent');
+  setEncounterTypeField(e.encounterType || 'inpatient_review');
+  populatePatientStatusFields(findPatient(e.patientId));
   document.getElementById('formErr').textContent = '';
   document.getElementById('entryFormTitle').textContent = 'Edit billing entry';
   document.getElementById('saveBtn').textContent = 'Update entry';
@@ -559,7 +616,8 @@ function addAnotherDayFor(patientId){
   currentPhoto = null;
   renderPhotoZone();
   document.getElementById('locationInput').value = '';
-  setEncounterTypeField('subsequent');
+  setEncounterTypeField('inpatient_review');
+  populatePatientStatusFields(findPatient(patientId));
   renderMbsRows(['']);
   document.getElementById('noteInput').value = '';
   document.getElementById('formErr').textContent = '';
@@ -745,8 +803,12 @@ function statusLabel(status){
   return 'Pending';
 }
 function encounterTypeLabel(type){
-  const map = { initial:'Initial', subsequent:'Subsequent', review:'Review', discharge:'Discharge' };
-  return map[type] || 'Subsequent';
+  const map = {
+    inpatient_new:'Inpatient New', inpatient_review:'Inpatient Review', procedure:'Procedure',
+    // legacy values from before this update, mapped to the closest current equivalent
+    initial:'Inpatient New', subsequent:'Inpatient Review', review:'Inpatient Review', discharge:'Inpatient Review'
+  };
+  return map[type] || 'Inpatient Review';
 }
 function setEncounterTypeField(value){
   const el = document.getElementById('encounterTypeInput');
@@ -1179,7 +1241,8 @@ function renderPatientPickerList(){
     row.addEventListener('click', ()=>{
       selectedPatientId = p.id;
       currentPhoto = null;
-      setEncounterTypeField('subsequent');
+      setEncounterTypeField('inpatient_review');
+      populatePatientStatusFields(p);
       closeModal();
       renderPhotoZone();
       document.getElementById('entryFormCard').scrollIntoView({ behavior:'smooth', block:'start' });
@@ -1776,7 +1839,7 @@ async function backfillEntryFields(){
   const updates = [];
   billingEntries.forEach((e)=>{
     let changed = false;
-    if(!e.encounterType){ e.encounterType = 'subsequent'; changed = true; }
+    if(!e.encounterType){ e.encounterType = 'inpatient_review'; changed = true; }
     if(!e.statusHistory || !e.statusHistory.length){
       const hist = [{ status:'pending', at: e.createdAt || new Date() }];
       if(e.forwardedAt) hist.push({ status:'forwarded', at: e.forwardedAt });
