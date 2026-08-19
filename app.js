@@ -70,6 +70,7 @@ function genId(prefix){
 // App state
 // ==========================================================================
 let clinicianName = '';
+let mbsFavorites = []; // user's own curated {code, descriptor} list — never pre-populated by the app itself
 let patients = [];
 let billingEntries = [];
 let selected = new Set();
@@ -133,6 +134,53 @@ function collectMbsValues(){
   return [...new Set(items)];
 }
 renderMbsRows(['']);
+
+// ---- MBS favorites picker — a curated list the clinician builds themselves in
+// Settings. The app never pre-populates or invents MBS codes/descriptors. ----
+function addMbsCodeToForm(code){
+  const inputs = Array.from(document.querySelectorAll('.mbs-row-input'));
+  const emptyInput = inputs.find((i)=>!i.value.trim());
+  if(emptyInput){
+    emptyInput.value = code;
+  } else {
+    const row = document.createElement('div');
+    row.className = 'mbs-row';
+    row.innerHTML = `<input type="text" class="mbs-row-input" placeholder="e.g. 55126" inputmode="numeric" value="${escapeHtml(code)}">`;
+    document.getElementById('mbsRows').appendChild(row);
+  }
+  refreshMbsRemoveButtons();
+}
+function openMbsPicker(){
+  if(!mbsFavorites.length){ showToast('No saved items yet — add some in Settings'); return; }
+  navStack = [];
+  pushSheet(renderMbsPickerSheet);
+}
+function renderMbsPickerSheet(){
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `
+    <div class="overlay" id="overlay">
+      <div class="sheet">
+        <button class="sheet-close" id="closeSheet">✕</button>
+        <h3>Pick an item</h3>
+        <div id="mbsPickerList"></div>
+      </div>
+    </div>`;
+  document.getElementById('closeSheet').onclick = closeModal;
+  document.getElementById('overlay').addEventListener('click', (ev)=>{ if(ev.target.id === 'overlay') closeModal(); });
+  const listEl = document.getElementById('mbsPickerList');
+  mbsFavorites.forEach((f)=>{
+    const row = document.createElement('div');
+    row.className = 'picker-row';
+    row.innerHTML = `
+      <div class="picker-row-body">
+        <div class="picker-row-label">${escapeHtml(f.code)}</div>
+        <div class="picker-row-meta">${escapeHtml(f.descriptor || '')}</div>
+      </div>`;
+    row.addEventListener('click', ()=>{ addMbsCodeToForm(f.code); closeModal(); });
+    listEl.appendChild(row);
+  });
+}
+document.getElementById('pickMbsBtn').addEventListener('click', openMbsPicker);
 
 // ---- Photo capture: keep both a full-quality "backup" copy and a small thumb ----
 function downscaleImage(dataUrl, maxDim, quality){
@@ -232,6 +280,7 @@ function renderPhotoZone(){
       btn.addEventListener('click', ()=>{
         selectedPatientId = btn.getAttribute('data-id');
         currentPhoto = null;
+        document.getElementById('encounterTypeInput').value = 'subsequent';
         renderPhotoZone();
       });
     });
@@ -381,6 +430,7 @@ document.getElementById('saveBtn').addEventListener('click', async ()=>{
   const date = dateInput.value;
   const location = document.getElementById('locationInput').value;
   const note = document.getElementById('noteInput').value.trim();
+  const encounterType = document.getElementById('encounterTypeInput').value;
 
   if(!selectedPatientId && !currentPhoto){ err.textContent = 'Add a photo, or pick an existing patient above.'; return; }
   if(!date){ err.textContent = 'Select a date.'; return; }
@@ -388,11 +438,25 @@ document.getElementById('saveBtn').addEventListener('click', async ()=>{
   if(!mbsList.length){ err.textContent = 'Enter at least one MBS item number.'; return; }
   err.textContent = '';
 
+  // Same-day duplicate check — only meaningful when reusing an existing patient,
+  // since a brand-new patient can't already have an entry today by definition.
+  if(editingId === null && selectedPatientId){
+    const dup = billingEntries.some((e)=>e.patientId === selectedPatientId && e.date === date);
+    if(dup){
+      const p = findPatient(selectedPatientId);
+      const proceed = await confirmDialog(
+        `${escapeHtml(patientDisplayName(p))} already has a billing entry for ${formatDate(date)}. Save this as an additional entry anyway?`,
+        'Save anyway'
+      );
+      if(!proceed) return;
+    }
+  }
+
   try{
     if(editingId !== null){
       const e = billingEntries.find((x)=>x.id === editingId);
       if(e){
-        e.date = date; e.location = location; e.mbsList = mbsList; e.note = note;
+        e.date = date; e.location = location; e.mbsList = mbsList; e.note = note; e.encounterType = encounterType;
         await idbPut('billingEntries', e);
       }
       showToast('Entry updated');
@@ -410,9 +474,11 @@ document.getElementById('saveBtn').addEventListener('click', async ()=>{
         await idbPut('patients', patient);
         patientId = patient.id;
       }
+      const now = new Date();
       const entry = {
         id: genId('bl'), patientId,
-        date, location, mbsList, note, status:'pending', createdAt: new Date()
+        date, location, mbsList, note, encounterType, status:'pending', createdAt: now,
+        statusHistory: [{ status:'pending', at: now }]
       };
       billingEntries.unshift(entry);
       await idbPut('billingEntries', entry);
@@ -440,6 +506,7 @@ function resetForm(){
   document.getElementById('patientLabelInput').value = '';
   document.getElementById('noteInput').value = '';
   document.getElementById('locationInput').value = '';
+  document.getElementById('encounterTypeInput').value = 'initial';
   dateInput.value = new Date().toISOString().slice(0, 10);
   document.getElementById('formErr').textContent = '';
   document.getElementById('entryFormTitle').textContent = 'New billing entry';
@@ -458,6 +525,7 @@ function startEdit(id){
   document.getElementById('locationInput').value = e.location || '';
   renderMbsRows(e.mbsList && e.mbsList.length ? e.mbsList : ['']);
   document.getElementById('noteInput').value = e.note || '';
+  document.getElementById('encounterTypeInput').value = e.encounterType || 'subsequent';
   document.getElementById('formErr').textContent = '';
   document.getElementById('entryFormTitle').textContent = 'Edit billing entry';
   document.getElementById('saveBtn').textContent = 'Update entry';
@@ -473,6 +541,7 @@ function addAnotherDayFor(patientId){
   currentPhoto = null;
   renderPhotoZone();
   document.getElementById('locationInput').value = '';
+  document.getElementById('encounterTypeInput').value = 'subsequent';
   renderMbsRows(['']);
   document.getElementById('noteInput').value = '';
   document.getElementById('formErr').textContent = '';
@@ -516,7 +585,81 @@ function renderLists(){
   }
   updateBulkBar();
   renderPhotoZone(); // recent-patient chips can change as entries are added elsewhere
+  renderMissedBillingBanner();
 }
+
+// ---- Missed-billing gap detection ----
+// Heuristic only: flags a patient if 2+ calendar days have passed since their most
+// recent billing entry, unless that entry was marked "Discharge" (episode ended).
+// Doesn't know about planned leave, weekends, etc. — a prompt to check, not a verdict.
+function computeMissedBillingAlerts(){
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const alerts = [];
+  activePatients().forEach((p)=>{
+    const lines = billingEntries.filter((e)=>e.patientId === p.id).sort((a, b)=>a.date.localeCompare(b.date));
+    if(!lines.length) return;
+    const last = lines[lines.length - 1];
+    if(last.encounterType === 'discharge') return;
+    const daysSince = Math.round((new Date(todayStr) - new Date(last.date + 'T00:00:00')) / 86400000);
+    if(daysSince >= 2) alerts.push({ patient:p, last, daysSince });
+  });
+  return alerts.sort((a, b)=>b.daysSince - a.daysSince);
+}
+
+function renderMissedBillingBanner(){
+  const container = document.getElementById('missedBillingBanner');
+  if(!container) return;
+  const alerts = computeMissedBillingAlerts();
+  if(!alerts.length){ container.innerHTML = ''; return; }
+  container.innerHTML = `
+    <div class="alert-banner" id="missedBillingBannerClick">
+      <span>⚠️</span>
+      <div>
+        <strong>Possible missed billing.</strong> ${alerts.length} patient${alerts.length === 1 ? '' : 's'} with no entry recorded in 2+ days. Tap to review.
+      </div>
+    </div>`;
+  document.getElementById('missedBillingBannerClick').onclick = openMissedBillingSheet;
+}
+
+function openMissedBillingSheet(){
+  navStack = [];
+  pushSheet(renderMissedBillingSheet);
+}
+function renderMissedBillingSheet(){
+  const alerts = computeMissedBillingAlerts();
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `
+    <div class="overlay" id="overlay">
+      <div class="sheet">
+        <button class="sheet-close" id="closeSheet">✕</button>
+        <h3>Possible missed billing</h3>
+        <p class="mbs-hint" style="margin:0 0 12px 0;">A simple heuristic — flags patients with no billing entry in 2+ days who haven't been marked Discharge. Doesn't know about planned leave or transfers, so use judgement.</p>
+        <div id="missedBillingList"></div>
+      </div>
+    </div>`;
+  document.getElementById('closeSheet').onclick = closeModal;
+  document.getElementById('overlay').addEventListener('click', (ev)=>{ if(ev.target.id === 'overlay') closeModal(); });
+
+  const listEl = document.getElementById('missedBillingList');
+  if(!alerts.length){
+    listEl.innerHTML = `<div class="empty">No gaps detected right now.</div>`;
+    return;
+  }
+  alerts.forEach(({ patient, last, daysSince })=>{
+    const row = document.createElement('div');
+    row.className = 'picker-row';
+    row.innerHTML = `
+      <img src="${patient.photoThumb}" alt="">
+      <div class="picker-row-body">
+        <div class="picker-row-label">${escapeHtml(patientDisplayName(patient))}</div>
+        <div class="picker-row-meta">Last billed ${formatDate(last.date)} · ${escapeHtml(last.location || '—')} · ${daysSince} days ago</div>
+      </div>
+    `;
+    row.addEventListener('click', ()=>addAnotherDayFor(patient.id));
+    listEl.appendChild(row);
+  });
+}
+
 
 function updateBulkBar(){
   const bar = document.getElementById('bulkBar');
@@ -536,7 +679,7 @@ function buildEntryRow(e, selectable){
     <img src="${p ? p.photoThumb : ''}" alt="">
     <div class="entry-body">
       <div class="entry-mbs">${p && p.label ? escapeHtml(p.label) + ' · ' : ''}MBS ${escapeHtml((e.mbsList || []).join(', '))}</div>
-      <div class="entry-meta">${formatDate(e.date)} · ${escapeHtml(e.location || '—')}${e.note ? ' · ' + escapeHtml(e.note) : ''}</div>
+      <div class="entry-meta"><span class="encounter-tag">${encounterTypeLabel(e.encounterType)}</span>${formatDate(e.date)} · ${escapeHtml(e.location || '—')}${e.note ? ' · ' + escapeHtml(e.note) : ''}</div>
     </div>
     <span class="badge badge-${e.status}">${statusLabel(e.status)}</span>
   `;
@@ -573,6 +716,10 @@ function statusLabel(status){
   if(status === 'forwarded') return 'Forwarded to admin';
   return 'Pending';
 }
+function encounterTypeLabel(type){
+  const map = { initial:'Initial', subsequent:'Subsequent', review:'Review', discharge:'Discharge' };
+  return map[type] || 'Subsequent';
+}
 function showToast(msg){
   const root = document.getElementById('toastRoot');
   root.innerHTML = `<div class="toast">${msg}</div>`;
@@ -594,6 +741,27 @@ function closeModal(){
   document.getElementById('modalRoot').innerHTML = '';
 }
 
+// A confirm dialog that resolves true/false, for interrupting a flow (e.g. same-day
+// duplicate warning) without a full page-navigation-style sheet.
+function confirmDialog(message, confirmLabel){
+  return new Promise((resolve)=>{
+    const root = document.getElementById('modalRoot');
+    root.innerHTML = `
+      <div class="overlay" id="overlay">
+        <div class="sheet">
+          <h3>Heads up</h3>
+          <p style="font-size:14px;color:var(--navy-soft);line-height:1.5;margin:0 0 4px 0;">${message}</p>
+          <div class="btn-row">
+            <button class="btn btn-ghost btn-sm" id="cancelConfirmBtn">Cancel</button>
+            <button class="btn btn-primary btn-sm" id="okConfirmBtn">${confirmLabel || 'Continue'}</button>
+          </div>
+        </div>
+      </div>`;
+    document.getElementById('cancelConfirmBtn').onclick = ()=>{ root.innerHTML = ''; resolve(false); };
+    document.getElementById('okConfirmBtn').onclick = ()=>{ root.innerHTML = ''; resolve(true); };
+  });
+}
+
 function openDetail(id){
   navStack = [];
   pushSheet(()=>renderEntrySheet(id));
@@ -611,12 +779,11 @@ function renderEntrySheet(id){
         <h3>${p && p.label ? escapeHtml(p.label) + ' — ' : ''}MBS ${escapeHtml((e.mbsList || []).join(', '))}</h3>
         <img class="full" src="${p ? p.photoThumb : ''}" alt="Patient label">
         <div class="detail-row"><span class="k">Patient ref</span><span class="v">#${shortId(e.patientId)}</span></div>
+        <div class="detail-row"><span class="k">Encounter type</span><span class="v">${encounterTypeLabel(e.encounterType)}</span></div>
         <div class="detail-row"><span class="k">Date</span><span class="v">${formatDate(e.date)}</span></div>
         <div class="detail-row"><span class="k">Location</span><span class="v">${escapeHtml(e.location || '—')}</span></div>
         <div class="detail-row"><span class="k">MBS item(s)</span><span class="v">${escapeHtml((e.mbsList || []).join(', '))}</span></div>
         <div class="detail-row"><span class="k">Note</span><span class="v">${e.note ? escapeHtml(e.note) : '—'}</span></div>
-        ${e.forwardedAt ? `<div class="detail-row"><span class="k">Forwarded at</span><span class="v">${new Date(e.forwardedAt).toLocaleString('en-AU')}</span></div>` : ''}
-        ${e.billedAt ? `<div class="detail-row"><span class="k">Billed at</span><span class="v">${new Date(e.billedAt).toLocaleString('en-AU')}</span></div>` : ''}
 
         <label class="field-label">Status</label>
         <select id="statusSelect">
@@ -624,6 +791,11 @@ function renderEntrySheet(id){
           <option value="forwarded" ${e.status === 'forwarded' ? 'selected' : ''}>Forwarded to admin</option>
           <option value="billed" ${e.status === 'billed' ? 'selected' : ''}>Billed</option>
         </select>
+
+        ${(e.statusHistory && e.statusHistory.length) ? `
+        <p class="section-title" style="margin-top:14px;">Status history</p>
+        ${e.statusHistory.map((h)=>`<div class="detail-row"><span class="k">${statusLabel(h.status)}</span><span class="v">${new Date(h.at).toLocaleString('en-AU')}</span></div>`).join('')}
+        ` : ''}
 
         <div class="btn-row">
           <button class="btn btn-primary btn-sm" id="pdfBtn">Generate PDF</button>
@@ -655,6 +827,8 @@ function renderEntrySheet(id){
     else { delete e.forwardedAt; }
     if(newStatus === 'billed'){ e.billedAt = new Date(); }
     else { delete e.billedAt; }
+    if(!e.statusHistory) e.statusHistory = [];
+    e.statusHistory.push({ status: newStatus, at: new Date() });
     await idbPut('billingEntries', e);
     if(newStatus === 'billed') notifyBilled(e); else showToast(`Marked as ${statusLabel(newStatus).toLowerCase()}`);
     closeModal();
@@ -674,7 +848,7 @@ function renderPatientSheet(patientId){
   if(!p) return;
   const lines = billingEntries
     .filter((e)=>e.patientId === patientId)
-    .sort((a, b)=>new Date(b.date) - new Date(a.date));
+    .sort((a, b)=>a.date.localeCompare(b.date)); // chronological, for a readable timeline
   const root = document.getElementById('modalRoot');
   root.innerHTML = `
     <div class="overlay" id="overlay">
@@ -691,7 +865,7 @@ function renderPatientSheet(patientId){
           <button class="btn btn-primary btn-sm" id="addDayBtn2">Add another day</button>
         </div>
         ${p.ocrText ? `<p class="mbs-hint" style="margin:10px 0;">Detected (unverified, search-only): "${escapeHtml(p.ocrText.slice(0, 160))}"</p>` : ''}
-        <p class="section-title" style="margin-top:16px;">Billing entries for this patient</p>
+        <p class="section-title" style="margin-top:16px;">Episode timeline</p>
         <div id="patientLinesList"></div>
       </div>
     </div>`;
@@ -710,15 +884,22 @@ function renderPatientSheet(patientId){
   if(!lines.length){
     listEl.innerHTML = `<div class="empty">No billing entries yet for this patient.</div>`;
   } else {
-    lines.forEach((e)=>{
+    lines.forEach((e, idx)=>{
       const row = document.createElement('div');
-      row.className = 'entry';
+      row.className = 'timeline-row';
+      row.style.cursor = 'pointer';
       row.innerHTML = `
-        <div class="entry-body">
-          <div class="entry-mbs">MBS ${escapeHtml((e.mbsList || []).join(', '))}</div>
-          <div class="entry-meta">${formatDate(e.date)} · ${escapeHtml(e.location || '—')}</div>
+        <div class="timeline-marker">
+          <div class="timeline-dot"></div>
+          ${idx < lines.length - 1 ? '<div class="timeline-line"></div>' : ''}
         </div>
-        <span class="badge badge-${e.status}">${statusLabel(e.status)}</span>
+        <div class="timeline-content entry" style="margin-bottom:0;">
+          <div class="entry-body">
+            <div class="entry-mbs"><span class="encounter-tag">${encounterTypeLabel(e.encounterType)}</span>MBS ${escapeHtml((e.mbsList || []).join(', '))}</div>
+            <div class="entry-meta">${formatDate(e.date)} · ${escapeHtml(e.location || '—')}</div>
+          </div>
+          <span class="badge badge-${e.status}">${statusLabel(e.status)}</span>
+        </div>
       `;
       row.addEventListener('click', ()=>pushSheet(()=>renderEntrySheet(e.id)));
       listEl.appendChild(row);
@@ -739,37 +920,155 @@ function renderPatientPickerSheet(){
         <button class="sheet-close" id="closeSheet">✕</button>
         <h3>Choose a patient</h3>
         <input type="text" id="patientSearchInput" placeholder="Search by your shorthand, location, or date…">
+
+        <label class="field-label">Filter by date</label>
+        <select id="dateFilterMode">
+          <option value="none">Any date</option>
+          <option value="exact">Specific date</option>
+          <option value="range">Date range</option>
+          <option value="month">Month &amp; year</option>
+        </select>
+        <div id="dateFilterInputs" style="margin-top:8px;"></div>
+
+        <label class="field-label">Sort by</label>
+        <select id="patientSortSelect">
+          <option value="recent">Most recently seen</option>
+          <option value="entry_first">Date added: oldest first</option>
+          <option value="entry_last">Date added: newest first</option>
+          <option value="billing_first">Date of billing: earliest first</option>
+          <option value="billing_last">Date of billing: latest first</option>
+          <option value="alpha_az">Shorthand: A → Z</option>
+          <option value="alpha_za">Shorthand: Z → A</option>
+        </select>
         <div id="patientPickerList" style="margin-top:12px;"></div>
       </div>
     </div>`;
   document.getElementById('closeSheet').onclick = closeModal;
   document.getElementById('overlay').addEventListener('click', (ev)=>{ if(ev.target.id === 'overlay') closeModal(); });
-  document.getElementById('patientSearchInput').addEventListener('input', (ev)=>renderPatientPickerList(ev.target.value));
-  renderPatientPickerList('');
+  document.getElementById('patientSearchInput').addEventListener('input', renderPatientPickerList);
+  document.getElementById('patientSortSelect').addEventListener('change', renderPatientPickerList);
+  document.getElementById('dateFilterMode').addEventListener('change', ()=>{
+    renderDateFilterInputs();
+    renderPatientPickerList();
+  });
+  renderDateFilterInputs();
+  renderPatientPickerList();
 }
-function renderPatientPickerList(query){
+
+function renderDateFilterInputs(){
+  const mode = document.getElementById('dateFilterMode').value;
+  const container = document.getElementById('dateFilterInputs');
+  if(mode === 'exact'){
+    container.innerHTML = `<input type="date" id="dateFilterExact">`;
+    document.getElementById('dateFilterExact').addEventListener('change', renderPatientPickerList);
+  } else if(mode === 'range'){
+    container.innerHTML = `
+      <div class="date-filter-row">
+        <input type="date" id="dateFilterFrom" aria-label="From date">
+        <input type="date" id="dateFilterTo" aria-label="To date">
+      </div>`;
+    document.getElementById('dateFilterFrom').addEventListener('change', renderPatientPickerList);
+    document.getElementById('dateFilterTo').addEventListener('change', renderPatientPickerList);
+  } else if(mode === 'month'){
+    container.innerHTML = `<input type="month" id="dateFilterMonth">`;
+    document.getElementById('dateFilterMonth').addEventListener('change', renderPatientPickerList);
+  } else {
+    container.innerHTML = '';
+  }
+}
+
+// True if this patient has at least one billing entry matching the selected date filter.
+function patientMatchesDateFilter(patientId){
+  const mode = document.getElementById('dateFilterMode').value;
+  if(mode === 'none') return true;
+  const entryDates = billingEntries.filter((e)=>e.patientId === patientId).map((e)=>e.date);
+  if(!entryDates.length) return false;
+
+  if(mode === 'exact'){
+    const val = document.getElementById('dateFilterExact').value;
+    if(!val) return true;
+    return entryDates.includes(val);
+  }
+  if(mode === 'range'){
+    const from = document.getElementById('dateFilterFrom').value;
+    const to = document.getElementById('dateFilterTo').value;
+    if(!from && !to) return true;
+    return entryDates.some((d)=>(!from || d >= from) && (!to || d <= to));
+  }
+  if(mode === 'month'){
+    const val = document.getElementById('dateFilterMonth').value; // "YYYY-MM"
+    if(!val) return true;
+    return entryDates.some((d)=>d.slice(0, 7) === val);
+  }
+  return true;
+}
+
+function patientPickerSortLabel(p){ return (p.label || '').trim().toLowerCase(); }
+
+function patientMatchingDateEntries(patientId){
+  const mode = document.getElementById('dateFilterMode').value;
+  const entries = billingEntries.filter((e)=>e.patientId === patientId);
+  if(mode === 'none') return null;
+  let matches = entries;
+  if(mode === 'exact'){
+    const val = document.getElementById('dateFilterExact').value;
+    if(val) matches = entries.filter((e)=>e.date === val);
+  } else if(mode === 'range'){
+    const from = document.getElementById('dateFilterFrom').value;
+    const to = document.getElementById('dateFilterTo').value;
+    if(from || to) matches = entries.filter((e)=>(!from || e.date >= from) && (!to || e.date <= to));
+  } else if(mode === 'month'){
+    const val = document.getElementById('dateFilterMonth').value;
+    if(val) matches = entries.filter((e)=>e.date.slice(0, 7) === val);
+  }
+  return matches.slice().sort((a, b)=>a.date.localeCompare(b.date));
+}
+
+function comparePickerRows(mode, a, b){
+  if(mode === 'alpha_az' || mode === 'alpha_za'){
+    const la = patientPickerSortLabel(a.p), lb = patientPickerSortLabel(b.p);
+    const aEmpty = la === '', bEmpty = lb === '';
+    if(aEmpty !== bEmpty) return aEmpty ? 1 : -1; // patients with no shorthand sink to the bottom either way
+    if(la < lb) return mode === 'alpha_az' ? -1 : 1;
+    if(la > lb) return mode === 'alpha_az' ? 1 : -1;
+    return 0;
+  }
+  if(mode === 'entry_first' || mode === 'entry_last'){
+    const at = new Date(a.p.createdAt).getTime();
+    const bt = new Date(b.p.createdAt).getTime();
+    return mode === 'entry_first' ? at - bt : bt - at;
+  }
+  // billing_first, billing_last, and the default "recent" (= billing_last)
+  const aHas = !!a.last, bHas = !!b.last;
+  if(aHas !== bHas) return aHas ? -1 : 1; // patients with no billing entries yet sink to the bottom
+  if(!aHas && !bHas) return 0;
+  const wantAsc = mode === 'billing_first';
+  if(a.last.date < b.last.date) return wantAsc ? -1 : 1;
+  if(a.last.date > b.last.date) return wantAsc ? 1 : -1;
+  return 0;
+}
+
+function renderPatientPickerList(){
   const listEl = document.getElementById('patientPickerList');
   if(!listEl) return;
-  const q = query.trim().toLowerCase();
+  const q = document.getElementById('patientSearchInput').value.trim().toLowerCase();
+  const sortMode = document.getElementById('patientSortSelect').value;
 
   const rows = activePatients().map((p)=>{
     const last = patientLastEntry(p.id);
     return { p, last };
   }).filter(({ p, last })=>{
+    if(!patientMatchesDateFilter(p.id)) return false;
     if(!q) return true;
     const haystack = [
       p.label || '', p.ocrText || '',
       last ? last.location || '' : '', last ? last.date : ''
     ].join(' ').toLowerCase();
     return haystack.includes(q);
-  }).sort((a, b)=>{
-    const aDate = a.last ? a.last.date : (a.p.createdAt || '');
-    const bDate = b.last ? b.last.date : (b.p.createdAt || '');
-    return bDate > aDate ? 1 : (bDate < aDate ? -1 : 0);
-  });
+  }).sort((a, b)=>comparePickerRows(sortMode, a, b));
 
   if(!rows.length){
-    listEl.innerHTML = `<div class="empty">${q ? 'No patients match that search.' : 'No patients yet — capture one from the form above.'}</div>`;
+    listEl.innerHTML = `<div class="empty">${q || document.getElementById('dateFilterMode').value !== 'none' ? 'No patients match that search/filter.' : 'No patients yet — capture one from the form above.'}</div>`;
     return;
   }
 
@@ -777,22 +1076,36 @@ function renderPatientPickerList(query){
   rows.forEach(({ p, last })=>{
     const row = document.createElement('div');
     row.className = 'picker-row';
+    const matching = patientMatchingDateEntries(p.id);
+    let metaText;
+    if(matching && matching.length){
+      const dateStrs = matching.map((e)=>formatDate(e.date));
+      const shown = dateStrs.length > 3 ? dateStrs.slice(0, 3).join(', ') + ` +${dateStrs.length - 3} more` : dateStrs.join(', ');
+      metaText = `Billed: ${shown}`;
+    } else if(last){
+      metaText = `Last seen ${formatDate(last.date)} · ${escapeHtml(last.location || '—')}`;
+    } else {
+      metaText = 'No billing entries yet';
+    }
     row.innerHTML = `
       <img src="${p.photoThumb}" alt="">
       <div class="picker-row-body">
         <div class="picker-row-label">${escapeHtml(patientDisplayName(p))}</div>
-        <div class="picker-row-meta">${last ? `Last seen ${formatDate(last.date)} · ${escapeHtml(last.location || '—')}` : 'No billing entries yet'}</div>
+        <div class="picker-row-meta">${metaText}</div>
       </div>
     `;
     row.addEventListener('click', ()=>{
       selectedPatientId = p.id;
       currentPhoto = null;
+      document.getElementById('encounterTypeInput').value = 'subsequent';
       closeModal();
       renderPhotoZone();
       document.getElementById('entryFormCard').scrollIntoView({ behavior:'smooth', block:'start' });
     });
     listEl.appendChild(row);
   });
+
+
 }
 
 async function runOcr(patientId){
@@ -868,7 +1181,12 @@ async function generatePdf(list){
   const toForward = list.filter((e)=>e.status === 'pending');
   if(toForward.length){
     const now = new Date();
-    await Promise.all(toForward.map((e)=>{ e.status = 'forwarded'; e.forwardedAt = now; return idbPut('billingEntries', e); }));
+    await Promise.all(toForward.map((e)=>{
+      e.status = 'forwarded'; e.forwardedAt = now;
+      if(!e.statusHistory) e.statusHistory = [];
+      e.statusHistory.push({ status:'forwarded', at: now });
+      return idbPut('billingEntries', e);
+    }));
     renderLists();
   }
 
@@ -898,6 +1216,7 @@ async function generatePdf(list){
     line('Patient ref:', p && p.label ? `#${shortId(e.patientId)} (${p.label})` : `#${shortId(e.patientId)}`);
     line('Date of service:', formatDate(e.date));
     line('Location:', e.location);
+    line('Encounter type:', encounterTypeLabel(e.encounterType));
     line('MBS item number(s):', (e.mbsList || []).join(', '));
     line('Note:', e.note);
     line('Status:', statusLabel(e.status));
@@ -930,7 +1249,12 @@ document.getElementById('bulkMarkBilledBtn').addEventListener('click', async ()=
   const list = activeEntries().filter((e)=>selected.has(e.id) && e.status !== 'billed');
   if(!list.length) return;
   const now = new Date();
-  await Promise.all(list.map((e)=>{ e.status = 'billed'; e.billedAt = now; return idbPut('billingEntries', e); }));
+  await Promise.all(list.map((e)=>{
+    e.status = 'billed'; e.billedAt = now;
+    if(!e.statusHistory) e.statusHistory = [];
+    e.statusHistory.push({ status:'billed', at: now });
+    return idbPut('billingEntries', e);
+  }));
   selected.clear();
   showToast(`${list.length} ${list.length === 1 ? 'entry' : 'entries'} marked billed`);
   renderLists();
@@ -961,6 +1285,11 @@ function renderSettingsSheet(){
         <input type="text" id="clinicianInput" placeholder="Dr First Last" value="${clinicianName ? escapeHtml(clinicianName) : ''}">
         <div class="settings-row"><span style="font-size:13px;color:var(--muted);">Appears on generated PDF slips and reports</span></div>
         <button class="btn btn-primary" id="saveSettingsBtn">Save</button>
+
+        <p class="section-title" style="margin-top:22px;">Your saved MBS items</p>
+        <p class="mbs-hint" style="margin:0 0 10px 0;">Build your own shortlist of commonly-used item numbers — nothing is pre-filled, since only you know which are current and correct for your practice.</p>
+        <div id="mbsFavoritesList"></div>
+        <button class="btn btn-ghost btn-sm" id="addMbsFavoriteBtn" style="margin-top:10px;">+ Add saved item</button>
       </div>
     </div>`;
   document.getElementById('closeSheet').onclick = closeModal;
@@ -972,6 +1301,138 @@ function renderSettingsSheet(){
     closeModal();
     showToast('Settings saved');
   };
+
+  const listEl = document.getElementById('mbsFavoritesList');
+  if(!mbsFavorites.length){
+    listEl.innerHTML = `<div class="empty">No saved items yet.</div>`;
+  } else {
+    listEl.innerHTML = '';
+    mbsFavorites.forEach((f, idx)=>{
+      const row = document.createElement('div');
+      row.className = 'picker-row';
+      row.style.cursor = 'default';
+      row.innerHTML = `
+        <div class="picker-row-body">
+          <div class="picker-row-label">${escapeHtml(f.code)}</div>
+          <div class="picker-row-meta">${escapeHtml(f.descriptor || '')}</div>
+        </div>
+        <button class="mbs-remove-btn" aria-label="Remove">×</button>
+      `;
+      row.querySelector('.mbs-remove-btn').addEventListener('click', async ()=>{
+        mbsFavorites.splice(idx, 1);
+        await idbSetSetting('mbsFavorites', mbsFavorites);
+        renderSettingsSheet();
+      });
+      listEl.appendChild(row);
+    });
+  }
+  document.getElementById('addMbsFavoriteBtn').onclick = ()=>pushSheet(renderAddMbsFavoriteSheet);
+}
+
+function renderAddMbsFavoriteSheet(){
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `
+    <div class="overlay" id="overlay">
+      <div class="sheet">
+        <button class="sheet-close" id="backBtn" aria-label="Back">←</button>
+        <h3>Add saved item</h3>
+        <label class="field-label first">MBS item number</label>
+        <input type="text" id="newFavCode" inputmode="numeric" placeholder="e.g. 55126">
+        <label class="field-label">Descriptor (optional)</label>
+        <input type="text" id="newFavDescriptor" placeholder="Your own short description">
+        <div class="err" id="newFavErr"></div>
+        <button class="btn btn-primary" id="saveFavBtn">Add</button>
+      </div>
+    </div>`;
+  document.getElementById('backBtn').onclick = popSheet;
+  document.getElementById('overlay').addEventListener('click', (ev)=>{ if(ev.target.id === 'overlay') closeModal(); });
+  document.getElementById('saveFavBtn').onclick = async ()=>{
+    const code = document.getElementById('newFavCode').value.trim();
+    const descriptor = document.getElementById('newFavDescriptor').value.trim();
+    if(!code){ document.getElementById('newFavErr').textContent = 'Enter an item number.'; return; }
+    mbsFavorites.push({ code, descriptor });
+    await idbSetSetting('mbsFavorites', mbsFavorites);
+    closeModal();
+    showToast('Saved item added');
+  };
+}
+
+// ==========================================================================
+// Dashboard — simple counts from existing on-device data, no server involved
+// ==========================================================================
+document.getElementById('dashboardBtn').addEventListener('click', ()=>{
+  navStack = [];
+  pushSheet(renderDashboardSheet);
+});
+
+function renderDashboardSheet(){
+  const all = activeEntries();
+  const pendingCount = all.filter((e)=>e.status === 'pending').length;
+  const forwardedCount = all.filter((e)=>e.status === 'forwarded').length;
+  const billedCount = all.filter((e)=>e.status === 'billed').length;
+  const total = all.length || 1;
+  const alerts = computeMissedBillingAlerts();
+
+  const byLocation = {};
+  all.forEach((e)=>{
+    const loc = e.location || 'Unspecified';
+    if(!byLocation[loc]) byLocation[loc] = { pending:0, forwarded:0, billed:0 };
+    byLocation[loc][e.status] = (byLocation[loc][e.status] || 0) + 1;
+  });
+  const locations = Object.keys(byLocation).sort();
+
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `
+    <div class="overlay" id="overlay">
+      <div class="sheet">
+        <button class="sheet-close" id="closeSheet">✕</button>
+        <h3>Dashboard</h3>
+
+        <div class="stat-grid">
+          <div class="stat-card"><div class="num">${activePatients().length}</div><div class="lbl">Patients</div></div>
+          <div class="stat-card"><div class="num">${all.length}</div><div class="lbl">Billing entries</div></div>
+          <div class="stat-card"><div class="num">${pendingCount}</div><div class="lbl">Pending</div></div>
+          <div class="stat-card"><div class="num">${forwardedCount}</div><div class="lbl">Forwarded</div></div>
+          <div class="stat-card"><div class="num">${billedCount}</div><div class="lbl">Billed</div></div>
+          <div class="stat-card"><div class="num">${alerts.length}</div><div class="lbl">Possible gaps</div></div>
+        </div>
+
+        ${alerts.length ? `<button class="btn btn-ghost btn-sm" id="viewGapsBtn" style="margin-bottom:16px;">View possible missed billing</button>` : ''}
+
+        <p class="section-title">By location</p>
+        <div class="loc-bar-legend" style="margin-bottom:10px;">
+          <span><span class="legend-dot" style="background:var(--pending);"></span>Pending</span>
+          <span><span class="legend-dot" style="background:var(--forwarded);"></span>Forwarded</span>
+          <span><span class="legend-dot" style="background:var(--success);"></span>Billed</span>
+        </div>
+        <div id="dashboardLocations"></div>
+      </div>
+    </div>`;
+  document.getElementById('closeSheet').onclick = closeModal;
+  document.getElementById('overlay').addEventListener('click', (ev)=>{ if(ev.target.id === 'overlay') closeModal(); });
+  const viewGapsBtn = document.getElementById('viewGapsBtn');
+  if(viewGapsBtn) viewGapsBtn.onclick = ()=>pushSheet(renderMissedBillingSheet);
+
+  const locEl = document.getElementById('dashboardLocations');
+  if(!locations.length){
+    locEl.innerHTML = `<div class="empty">No billing entries yet.</div>`;
+  } else {
+    locations.forEach((loc)=>{
+      const counts = byLocation[loc];
+      const locTotal = counts.pending + counts.forwarded + counts.billed || 1;
+      const row = document.createElement('div');
+      row.className = 'loc-bar-row';
+      row.innerHTML = `
+        <div class="loc-name">${escapeHtml(loc)} <span style="color:var(--muted); font-weight:500;">(${counts.pending + counts.forwarded + counts.billed})</span></div>
+        <div class="loc-bar-track">
+          <div class="loc-bar-seg" style="width:${(counts.pending / locTotal) * 100}%; background:var(--pending);"></div>
+          <div class="loc-bar-seg" style="width:${(counts.forwarded / locTotal) * 100}%; background:var(--forwarded);"></div>
+          <div class="loc-bar-seg" style="width:${(counts.billed / locTotal) * 100}%; background:var(--success);"></div>
+        </div>
+      `;
+      locEl.appendChild(row);
+    });
+  }
 }
 
 // ==========================================================================
@@ -981,6 +1442,7 @@ document.getElementById('reportsBtn').addEventListener('click', ()=>{
   navStack = [];
   pushSheet(renderReportsSheet);
 });
+
 
 function renderReportsSheet(){
   const today = new Date().toISOString().slice(0, 10);
@@ -1037,6 +1499,7 @@ function reportRows(){
         location: e.location || '',
         patientId: e.patientId,
         patientRef: p && p.label ? `#${shortId(e.patientId)} (${p.label})` : `#${shortId(e.patientId)}`,
+        encounterType: encounterTypeLabel(e.encounterType),
         mbs: (e.mbsList || []).join(', '),
         note: e.note || '',
         status: statusLabel(e.status),
@@ -1072,10 +1535,10 @@ async function exportReport(kind){
   const stamp = new Date().toISOString().slice(0, 10);
 
   if(kind === 'csv'){
-    const headers = ['Date','Location','Patient Ref','MBS Item(s)','Note','Status','Billed At','Clinician'];
+    const headers = ['Date','Location','Patient Ref','Encounter Type','MBS Item(s)','Note','Status','Billed At','Clinician'];
     const escapeCsv = (v)=>`"${String(v).replace(/"/g, '""')}"`;
     const lines = [headers.map(escapeCsv).join(',')]
-      .concat(rows.map((r)=>[r.date, r.location, r.patientRef, r.mbs, r.note, r.status, r.billedAt, r.clinician].map(escapeCsv).join(',')));
+      .concat(rows.map((r)=>[r.date, r.location, r.patientRef, r.encounterType, r.mbs, r.note, r.status, r.billedAt, r.clinician].map(escapeCsv).join(',')));
     const blob = new Blob([lines.join('\r\n')], { type:'text/csv' });
     deliverFile(blob, `MHC-billing-report-${stamp}.csv`, 'text/csv', 'Billing report (CSV)');
     return;
@@ -1087,7 +1550,7 @@ async function exportReport(kind){
         await loadScript('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js');
       }
       const ws = XLSX.utils.json_to_sheet(rows.map((r)=>({
-        Date:r.date, Location:r.location, 'Patient Ref':r.patientRef, 'MBS Item(s)':r.mbs,
+        Date:r.date, Location:r.location, 'Patient Ref':r.patientRef, 'Encounter Type':r.encounterType, 'MBS Item(s)':r.mbs,
         Note:r.note, Status:r.status, 'Billed At':r.billedAt, Clinician:r.clinician
       })));
       const wb = XLSX.utils.book_new();
@@ -1109,8 +1572,9 @@ async function exportReport(kind){
     doc.setFontSize(9); doc.setTextColor(107, 119, 133);
     doc.text(`Clinician: ${clinicianName || 'Not set'}  ·  Generated ${new Date().toLocaleString('en-AU')}`, 30, 46);
 
-    const headers = ['Date','Location','Patient Ref','MBS Item(s)','Note','Status','Billed At'];
-    const colX = [30, 90, 200, 260, 380, 500, 560];
+    const headers = ['Date','Location','Patient Ref','Encounter','MBS Item(s)','Note','Status','Billed At'];
+    const colX =    [30,    85,        175,           250,        320,          430,   560,     620];
+    const maxChars = [10,   16,        14,            11,         20,           22,    12,       26];
     let y = 70;
     doc.setFontSize(8.5); doc.setTextColor(255,255,255);
     doc.setFillColor(18, 42, 69);
@@ -1121,8 +1585,8 @@ async function exportReport(kind){
     rows.forEach((r, i)=>{
       if(y > 560){ doc.addPage(); y = 40; }
       if(i % 2 === 0){ doc.setFillColor(245, 247, 248); doc.rect(30, y - 11, 770, 15, 'F'); }
-      const vals = [r.date, r.location, r.patientRef, r.mbs, r.note, r.status, r.billedAt];
-      vals.forEach((v, j)=>doc.text(String(v || '—').slice(0, 40), colX[j], y));
+      const vals = [r.date, r.location, r.patientRef, r.encounterType, r.mbs, r.note, r.status, r.billedAt];
+      vals.forEach((v, j)=>doc.text(String(v || '—').slice(0, maxChars[j]), colX[j], y));
       y += 15;
     });
 
@@ -1206,11 +1670,34 @@ async function migrateNameFromOldMultiLoginIfNeeded(){
   return '';
 }
 
+// One-time backfill so entries created before status history / encounter type existed
+// still show something sensible, rather than blank fields.
+async function backfillEntryFields(){
+  const updates = [];
+  billingEntries.forEach((e)=>{
+    let changed = false;
+    if(!e.encounterType){ e.encounterType = 'subsequent'; changed = true; }
+    if(!e.statusHistory || !e.statusHistory.length){
+      const hist = [{ status:'pending', at: e.createdAt || new Date() }];
+      if(e.forwardedAt) hist.push({ status:'forwarded', at: e.forwardedAt });
+      if(e.billedAt) hist.push({ status:'billed', at: e.billedAt });
+      e.statusHistory = hist;
+      changed = true;
+    }
+    if(changed) updates.push(idbPut('billingEntries', e));
+  });
+  if(updates.length) await Promise.all(updates);
+}
+
 async function init(){
   try{
     await migrateLegacyIfNeeded();
     clinicianName = await migrateNameFromOldMultiLoginIfNeeded();
-    [patients, billingEntries] = await Promise.all([idbAll('patients'), idbAll('billingEntries')]);
+    [patients, billingEntries, mbsFavorites] = await Promise.all([
+      idbAll('patients'), idbAll('billingEntries'), idbGetSetting('mbsFavorites')
+    ]);
+    mbsFavorites = mbsFavorites || [];
+    await backfillEntryFields();
     billingEntries.sort((a, b)=>new Date(b.createdAt) - new Date(a.createdAt));
     document.getElementById('clinicianLine').textContent = clinicianName ? clinicianName : 'Set your name in settings →';
   }catch(err){
